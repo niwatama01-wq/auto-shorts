@@ -1,4 +1,9 @@
-"""Claude API でジャンル別 Shorts 台本（JSON）を生成"""
+"""Claude API でジャンル別 Shorts 台本（JSON）を生成
+
+v7変更点:
+- duration パラメータを受け取り、プロンプトに {duration} {min/max_chars} {min/max_scenes} を埋める
+  既存ジャンル (horror等) のテンプレが {duration} 等を含まなければ自動で旧挙動にfallback
+"""
 import os
 import json
 import re
@@ -13,7 +18,6 @@ load_dotenv(config.ROOT / ".env")
 
 
 def _strip_to_json(text: str) -> str:
-    """Claudeの応答からJSON部分だけを抽出"""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -25,16 +29,44 @@ def _strip_to_json(text: str) -> str:
     return text[start:end + 1]
 
 
-def generate_script(theme: str, genre) -> dict:
-    """テーマとジャンルから台本JSONを生成して返す。同時にファイル保存。"""
+def _format_prompt(template: str, theme: str, duration: int) -> str:
+    """duration 対応のプロンプト整形。
+    旧テンプレ (theme のみ受ける) との後方互換のため、
+    プレースホルダー有無を見て分岐する。"""
+    has_duration = "{duration}" in template
+    if not has_duration:
+        return template.format(theme=theme)
+    # duration から各種数値を導出
+    # 1秒あたり ~5字、scene 1個 ~3秒
+    min_chars = int(duration * 5)
+    max_chars = int(duration * 7)
+    min_scenes = max(5, int(duration * 0.23))
+    max_scenes = max(7, int(duration * 0.30))
+    return template.format(
+        theme=theme,
+        duration=duration,
+        min_chars=min_chars,
+        max_chars=max_chars,
+        min_scenes=min_scenes,
+        max_scenes=max_scenes,
+    )
+
+
+def generate_script(theme: str, genre, duration: int | None = None) -> dict:
+    """テーマとジャンルから台本JSONを生成して返す。同時にファイル保存。
+
+    duration: 動画尺（秒）。Noneなら genre.DURATION_SEC、それも無ければ 30。
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set in environment or .env")
 
-    client = anthropic.Anthropic(api_key=api_key)
-    prompt = genre.PROMPT_TEMPLATE.format(theme=theme)
+    if duration is None:
+        duration = getattr(genre, "DURATION_SEC", 30)
 
-    # ジャンル毎のmax_tokens override（長尺は大きく取る）
+    client = anthropic.Anthropic(api_key=api_key)
+    prompt = _format_prompt(genre.PROMPT_TEMPLATE, theme, duration)
+
     max_tokens = getattr(genre, "CLAUDE_MAX_TOKENS", config.CLAUDE_MAX_TOKENS)
     msg = client.messages.create(
         model=config.CLAUDE_MODEL,
@@ -56,6 +88,7 @@ def generate_script(theme: str, genre) -> dict:
         "path": str(out_path),
         "theme": theme,
         "genre": genre.NAME,
+        "duration_sec": duration,
     }
     return script
 
@@ -65,8 +98,10 @@ if __name__ == "__main__":
     from genres import load_genre
     genre_name = sys.argv[1] if len(sys.argv) > 1 else "horror"
     theme = sys.argv[2] if len(sys.argv) > 2 else "テスト"
+    dur = int(sys.argv[3]) if len(sys.argv) > 3 else None
     g = load_genre(genre_name)
-    s = generate_script(theme, g)
+    s = generate_script(theme, g, duration=dur)
     print(f"Generated: {s['_meta']['path']}")
     print(f"Title candidates: {s['title_candidates']}")
     print(f"Scenes: {len(s['scenes'])}")
+    print(f"Duration: {s['_meta'].get('duration_sec')}秒")

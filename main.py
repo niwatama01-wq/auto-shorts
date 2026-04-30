@@ -1,9 +1,14 @@
 """auto-shorts オーケストレーター（ジャンル切替対応）
 
+v7変更点:
+- --duration 30|45 フラグ追加（45秒尺の試作用）
+- ハッシュタグに #FlashNews を追加
+
 使い方:
   python main.py --genre horror "深夜のコンビニで起きた不可解な出来事"
   python main.py --genre ai_news "OpenAIが新モデル発表"
-  python main.py --script output/scripts/horror_20260421_120000.json   # 既存台本から再生成
+  python main.py --genre ai_news --duration 45 "テスラFSDで大事故"
+  python main.py --script output/scripts/horror_20260421_120000.json
 """
 import argparse
 import json
@@ -12,7 +17,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Windows cp932 対策: stdout/stderrをUTF-8に
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -27,7 +31,6 @@ from genres import load_genre, list_genres
 
 
 def _infer_genre_from_script_path(path: str) -> str:
-    """script_genが付ける命名規則 <genre>_<timestamp>.json から genre を抽出"""
     stem = Path(path).stem
     m = re.match(r"^([a-z_]+)_\d{8}_\d{6}$", stem)
     if m:
@@ -38,11 +41,12 @@ def _infer_genre_from_script_path(path: str) -> str:
     )
 
 
-def run(genre_name: str, theme: str | None = None, existing_script_path: str | None = None) -> Path:
+def run(genre_name: str, theme: str | None = None,
+        existing_script_path: str | None = None,
+        duration: int | None = None) -> Path:
     config.ensure_dirs()
     genre = load_genre(genre_name)
 
-    # --script 再生成時は音声キャッシュがあるため VOICEVOX なしでも進める
     if not existing_script_path and not tts.voicevox_alive():
         print(f"❌ VOICEVOX が起動していません ({config.VOICEVOX_HOST})")
         print("   VOICEVOXアプリを起動してから再実行してください")
@@ -55,11 +59,9 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
 
     if existing_script_path:
         print(f"📜 既存台本を使用: {existing_script_path}")
-        # ファイル名 <genre>_<timestamp> から timestamp 部分のみ抽出
         stem = Path(existing_script_path).stem
         m = re.match(r"^[a-z_]+_(\d{8}_\d{6})$", stem)
         ts_from_name = m.group(1) if m else stem
-        # run_dir/script.json を優先して読む（attribution等を保存した enriched 版）
         enriched_path = config.OUT_VIDEOS / ts_from_name / "script.json"
         if enriched_path.exists():
             print(f"   enriched版を発見: {enriched_path}")
@@ -69,14 +71,14 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
         script.setdefault("_meta", {})["timestamp"] = ts_from_name
         script["_meta"]["genre"] = genre.NAME
     else:
-        print(f"📜 [{genre.NAME}] Claude で台本生成中: {theme}")
-        script = script_gen.generate_script(theme, genre)
+        eff_dur = duration if duration is not None else getattr(genre, "DURATION_SEC", 30)
+        print(f"📜 [{genre.NAME}] Claude で台本生成中 ({eff_dur}秒尺): {theme}")
+        script = script_gen.generate_script(theme, genre, duration=duration)
         print(f"   → {script['_meta']['path']}")
         print(f"   タイトル候補: {script['title_candidates']}")
         print(f"   サムネ煽り: {script['thumbnail_text']}")
         print(f"   シーン数: {len(script['scenes'])}")
 
-        # 履歴をここで即記録（動画生成やアップロードが失敗しても再選定されないように）
         history_path = config.ROOT / "posted_history.json"
         try:
             history = json.loads(history_path.read_text(encoding="utf-8"))
@@ -88,6 +90,7 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
             "title": script.get("title_candidates", [""])[0],
             "theme": (theme or "")[:300],
             "thumbnail_text": script.get("thumbnail_text", ""),
+            "duration_sec": script["_meta"].get("duration_sec"),
         })
         history["posted"] = history["posted"][-100:]
         history_path.write_text(
@@ -112,20 +115,19 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
     out_video = run_dir / f"{ts}_shorts.mp4"
     video_assemble.assemble(script, audio_map, image_map, out_video, genre)
 
-    # サムネ自動生成はスキップ（YouTube側で動画から自動選出 or 手動設定）
     out_thumb = run_dir / f"{ts}_thumb.png"
     if False:  # disabled
         thumbnail_gen.generate_thumbnail(script, image_map, out_thumb, genre)
 
-    # YouTube概要欄（スタイリッシュ版）
+    # YouTube概要欄
     import web_image_search as _wis
     attrs = script.get("_attributions", [])
     title = script["title_candidates"][0] if script.get("title_candidates") else ""
     hook = script["scenes"][0]["narration"] if script.get("scenes") else ""
-    # ** マーカー除去
     import re as _re
     hook_clean = _re.sub(r"\*\*([^*]+?)\*\*", r"\1", hook).strip()
     theme = script["_meta"].get("theme", "")[:300]
+    duration_label = script["_meta"].get("duration_sec", 30)
 
     sep = "━━━━━━━━━━━━━━━━━━━━"
     desc_lines = [
@@ -133,7 +135,7 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
         "",
         sep,
         "  60秒ニュース速報 / Flash News",
-        "  世界の今を、30秒で。",
+        f"  世界の今を、{duration_label}秒で。",
         sep,
         "",
         "▼ 本日のヘッドライン",
@@ -144,11 +146,11 @@ def run(genre_name: str, theme: str | None = None, existing_script_path: str | N
         "",
         "▼ このチャンネルについて",
         "　世界中のニュースを厳選・要約し、",
-        "　30秒の報道調ショートにまとめてお届け。",
+        f"　{duration_label}秒の報道調ショートにまとめてお届け。",
         "　テック、経済、政治、エンタメ、国際、社会——",
         "　ジャンル問わず、今この瞬間を速く、客観的に。",
         "",
-        "#Shorts #ニュース速報 #30秒",
+        "#Shorts #ニュース速報 #30秒 #FlashNews",
         "",
         sep,
     ]
@@ -190,6 +192,8 @@ def main():
     parser.add_argument("--genre", choices=list_genres(),
                         help=f"ジャンル: {', '.join(list_genres())}")
     parser.add_argument("--script", help="既存台本JSONから再生成（genreはファイル名から推定）")
+    parser.add_argument("--duration", type=int, choices=[30, 45], default=None,
+                        help="動画尺（秒）。デフォルトはジャンル設定 (ai_news=30)")
     args = parser.parse_args()
 
     if not args.theme and not args.script:
@@ -202,7 +206,8 @@ def main():
         print("❌ --genre を指定してください（例: --genre ai_news）")
         sys.exit(1)
 
-    run(genre_name=args.genre, theme=args.theme, existing_script_path=args.script)
+    run(genre_name=args.genre, theme=args.theme,
+        existing_script_path=args.script, duration=args.duration)
 
 
 if __name__ == "__main__":

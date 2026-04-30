@@ -1,4 +1,9 @@
-"""VOICEVOX でシーンごとに wav 生成（ジャンル別話者対応）"""
+"""VOICEVOX でシーンごとに wav 生成（ジャンル別話者対応）
+
+v7変更点:
+- pre/post_phoneme_length と pause_length_scale をジャンル設定から読むように
+  (デフォルトは旧値と同じ)
+"""
 import json
 import re
 import wave
@@ -10,9 +15,7 @@ import config
 
 
 def _strip_emphasis(text: str) -> str:
-    """ナレーションから **word** マークと周辺空白を除去（音声合成用）。
-    「なんと **1600万件** ものやり取り」→「なんと1600万件ものやり取り」"""
-    # マーカー前後の空白ごと食べる（日本語は基本空白なしで繋がる）
+    """ナレーションから **word** マークと周辺空白を除去（音声合成用）。"""
     text = re.sub(r"\s*\*\*\s*([^*]+?)\s*\*\*\s*", r"\1", text)
     return text
 
@@ -69,12 +72,11 @@ def synthesize_scene(text: str, out_path: Path, genre, silence_sec: float = 1.5)
     query["speedScale"] = genre.VOICEVOX_SPEED
     query["pitchScale"] = genre.VOICEVOX_PITCH
     query["intonationScale"] = genre.VOICEVOX_INTONATION
-    # 文末/文頭の無音を短く（区切りが間延びしないように）
-    query["postPhonemeLength"] = 0.05
-    query["prePhonemeLength"] = 0.05
-    # 句読点ポーズも短く（ニュース報道調のテンポ）
+    # v7: ジャンル設定があれば使う、なければ従来値
+    query["postPhonemeLength"] = getattr(genre, "VOICEVOX_POST_PHONEME", 0.05)
+    query["prePhonemeLength"] = getattr(genre, "VOICEVOX_PRE_PHONEME", 0.05)
     if "pauseLengthScale" in query:
-        query["pauseLengthScale"] = 0.7
+        query["pauseLengthScale"] = getattr(genre, "VOICEVOX_PAUSE_LENGTH_SCALE", 0.7)
 
     wav = _synthesis(query, speaker_id)
     out_path.write_bytes(wav)

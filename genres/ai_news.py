@@ -1,12 +1,35 @@
-"""AIニュースShortsのジャンル設定"""
+"""AIニュースShortsのジャンル設定 (v7: 競合差別化版)
+
+変更点 (vs v6):
+- 音声: AI笑話 (青山龍星 同声) との差別化のため intonation を 1.05 → 1.25 へ
+  speed 1.10 → 1.13、pitch 0.0 → -0.03 (重み付き低音化)、
+  pre/post_phoneme と pause_length_scale を新規露出
+- 冒頭ジングル: INTRO_JINGLE_ENABLED で 0.5秒の「Flash News」ロゴ枠を有効化
+- 尺パラメータ化: DURATION_SEC で 30/45 切替可能。プロンプト側も {duration} を受ける
+"""
 
 NAME = "ai_news"
 
-# ===== VOICEVOX =====
+# ===== VOICEVOX (v7: 報道アンカー風に強調) =====
 VOICEVOX_SPEAKER_ID = 13   # 青山龍星（ニュースキャスター調・ノーマル）
-VOICEVOX_SPEED = 1.10
-VOICEVOX_PITCH = 0.0
-VOICEVOX_INTONATION = 1.05
+VOICEVOX_SPEED = 1.13      # ↑ 1.10 → 1.13 緊迫感UP
+VOICEVOX_PITCH = -0.03     # ↑ 0.0 → -0.03 重み・権威感
+VOICEVOX_INTONATION = 1.25 # ↑ 1.05 → 1.25 起伏の効いた抑揚 (AI笑話との差別化最重要)
+VOICEVOX_PRE_PHONEME = 0.05    # 文頭の無音
+VOICEVOX_POST_PHONEME = 0.05   # 文末の無音
+VOICEVOX_PAUSE_LENGTH_SCALE = 0.7  # 句読点ポーズ短縮 (テンポ重視)
+
+# ===== 尺（30 or 45 秒）。CLI --duration で上書き可 =====
+DURATION_SEC = 30
+
+# ===== 冒頭ジングル（0.5秒「Flash News」ロゴ + 速報音） =====
+INTRO_JINGLE_ENABLED = True
+INTRO_JINGLE_DURATION = 0.5
+INTRO_JINGLE_TEXT = "Flash News"
+INTRO_JINGLE_SUBTEXT = "60秒ニュース速報"
+INTRO_JINGLE_BG_COLOR = (220, 30, 30)        # 速報赤と統一
+INTRO_JINGLE_TEXT_COLOR = "#FFE633"           # 黄色 (テロップと統一)
+INTRO_JINGLE_SFX = "breaking_alert"           # 既存のSFXエイリアス
 
 # ===== Stable Diffusion（写実ニュース報道写真） =====
 SD_STYLE_PREFIX = "photorealistic news photography, "
@@ -23,42 +46,35 @@ SD_NEGATIVE = (
 )
 
 # ===== 固有名詞→画像オーバーライド =====
-# 台本JSON の各 scene の "entity" フィールドが下記のいずれかなら、
-# assets/entities/<entity>.png/.jpg があれば SDXL生成画像の代わりに使用
 ENTITY_CANDIDATES = [
-    # テック企業
     "openai", "anthropic", "google", "microsoft", "meta", "apple",
     "amazon", "nvidia", "tesla", "spacex", "samsung",
-    # AI 関連
     "claude", "gpt", "gemini", "chatgpt",
     "ai_chip", "datacenter", "server_room",
-    # 国・地域
     "japan", "usa", "china", "eu", "korea",
-    # ニュース汎用
     "breaking_news", "courtroom", "police", "press_conference",
     "stock_chart_up", "stock_chart_down", "hacker", "cyber_attack",
     "ceo_meeting", "office", "city_skyline",
-    # エンタメ
     "concert", "microphone", "stage", "kpop",
 ]
 
 # ===== Subtitle =====
 SUBTITLE_COLOR = "white"
-SUBTITLE_STROKE_COLOR = "#0a1f3a"        # 濃紺の縁取り
-SUBTITLE_EMPHASIS_COLOR = "#FFE633"      # 強調ワードの黄色
-SUBTITLE_EMPHASIS_SHAKE = True           # 強調シーンで字幕シェイク
+SUBTITLE_STROKE_COLOR = "#0a1f3a"
+SUBTITLE_EMPHASIS_COLOR = "#FFE633"
+SUBTITLE_EMPHASIS_SHAKE = True
 
 # ===== Thumbnail =====
 THUMBNAIL_BADGE_TEXT = "速報"
-THUMBNAIL_TEXT_COLOR = "#FFE633"          # 黄
+THUMBNAIL_TEXT_COLOR = "#FFE633"
 THUMBNAIL_STROKE_COLOR = "#000000"
 
 # ===== BGM =====
-BGM_VOLUME = 0.10   # ナレーション優先、ニュース感を保つちょうどいい音量
+BGM_VOLUME = 0.10
 
-# ===== キャラクター立ち絵（オプショナル、画像があれば自動表示） =====
-CHARACTER_DIR = "ai_news"     # assets/characters/<dir>/<expression>.png
-CHARACTER_POSITION = "right"  # "left" or "right"
+# ===== キャラクター立ち絵 =====
+CHARACTER_DIR = "ai_news"
+CHARACTER_POSITION = "right"
 EMOTION_TO_EXPRESSION = {
     "hook": "surprise",
     "normal": "normal",
@@ -68,12 +84,13 @@ EMOTION_TO_EXPRESSION = {
     "outro": "smile",
 }
 
-# ===== Claude prompt =====
+# ===== Claude prompt (v7: 尺パラメータ化) =====
+# 使用変数: {theme}, {duration}, {min_chars}, {max_chars}, {min_scenes}, {max_scenes}
 PROMPT_TEMPLATE = """あなたは YouTube Shorts ニュースチャンネルの台本作家です。
 扱うジャンルは問いません（テック、経済、政治、エンタメ、国際、社会等）。
 
 【タスク】
-以下のネタから **30秒のShorts台本（短く引き締まった速報）** を生成してください。
+以下のネタから **{duration}秒のShorts台本（短く引き締まった速報）** を生成してください。
 視聴者は一般層。ニュース番組のアナウンサー読み上げのように、
 要点を絞ってテンポ良く伝えます。**報道調・ニュース解説調**で書きます
 （断定形、体言止め可、敬体「です・ます」も可）。
@@ -202,8 +219,8 @@ PROMPT_TEMPLATE = """あなたは YouTube Shorts ニュースチャンネルの�
 そのため image_prompt と image_search_keyword は両方とも内容と整合する形で書く
 
 【構成ルール】
-- 全体 **30秒（短く引き締まった速報）**
-- scenesは **7-9個**（情報を絞ってテンポ重視）
+- 全体 **{duration}秒（短く引き締まった速報）**
+- scenesは **{min_scenes}-{max_scenes}個**（情報を絞ってテンポ重視）
 - scene_id=1は必ずemotion="hook"、duration=2-3秒
 - フック例「AI業界に **激震** が走りました」「衝撃のニュースです」
 - 中盤に必ず1つemotion="shock"（数字や衝撃の事実で）
@@ -214,7 +231,7 @@ PROMPT_TEMPLATE = """あなたは YouTube Shorts ニュースチャンネルの�
 - 1シーン **3-4秒**(VOICEVOX 青山龍星は5字/秒程度で読む)
 - ただし hook/shock は短く強く（12-20文字、2-3秒）
 - 視聴者が同じ画像で5秒以上止まらないよう、長めの説明は2シーンに分割
-- **合計ナレーション文字数 150-200文字を目標**（30秒に収める）
+- **合計ナレーション文字数 {min_chars}-{max_chars}文字を目標**（{duration}秒に収める）
 
 【文体（重要・厳守）】
 - **報道ニュース調**で、内容をしっかり説明する
