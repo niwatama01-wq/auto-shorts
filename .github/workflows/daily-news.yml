@@ -76,6 +76,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
       - name: Wait for VOICEVOX engine ready
         run: |
           for i in {1..90}; do
@@ -96,6 +100,8 @@ jobs:
           YOUTUBE_CLIENT_SECRET_JSON: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON }}
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
+          # GEMINI_COOKIES_JSON は JSON 配列で改行や引用符を含むため .env には書かない
+          # （Python 側では os.environ から読む。後続ステップで env: 渡し）
           cat > .env <<EOF
           GEMINI_API_KEY=$GEMINI_API_KEY
           REPLICATE_API_TOKEN=$REPLICATE_API_TOKEN
@@ -107,6 +113,8 @@ jobs:
 
       - name: Determine theme
         id: theme
+        env:
+          GEMINI_COOKIES_JSON: ${{ secrets.GEMINI_COOKIES_JSON }}
         run: |
           MANUAL_THEME='${{ github.event.inputs.theme }}'
           if [ -n "$MANUAL_THEME" ]; then
@@ -124,6 +132,8 @@ jobs:
           fi
 
       - name: Generate video
+        env:
+          GEMINI_COOKIES_JSON: ${{ secrets.GEMINI_COOKIES_JSON }}
         run: |
           python main.py --genre ai_news "${{ steps.theme.outputs.value }}"
 

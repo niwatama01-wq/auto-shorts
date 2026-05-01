@@ -13,9 +13,12 @@ ASSETS_SFX = ROOT / "assets" / "sfx"
 ASSETS_FONTS = ROOT / "assets" / "fonts"
 ASSETS_ENTITIES = ROOT / "assets" / "entities"   # 固有名詞→画像の差し替え用
 
-# ===== Gemini API =====
-# gemini-2.0-flash: 無料枠 1500 req/day（2.5-flashの20より緩い）
-# 必要なら "gemini-2.5-flash" や "gemini-2.5-pro" に切替可能
+# ===== Gemini =====
+# "browser": Playwright で gemini.google.com にCookie認証してアクセス（API制限なし）
+# "api"    : 公式 Gemini API（要 GEMINI_API_KEY、無料枠あり）
+GEMINI_BACKEND = "browser"
+
+# API 利用時のモデル（GEMINI_BACKEND="api" のとき有効）
 GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_MAX_TOKENS = 8192
 

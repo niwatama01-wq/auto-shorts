@@ -1,4 +1,5 @@
 google-genai>=1.0
+playwright>=1.40
 python-dotenv>=1.0
 requests>=2.31
 moviepy>=2.1
