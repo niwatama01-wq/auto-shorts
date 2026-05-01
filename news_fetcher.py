@@ -7,7 +7,6 @@
 """
 import argparse
 import json
-import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -17,10 +16,10 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
 import feedparser
-from google import genai
 from dotenv import load_dotenv
 
 import config
+import gemini_client
 
 load_dotenv(config.ROOT / ".env")
 
@@ -254,7 +253,7 @@ VERIFY_DEDUP_PROMPT = """以下の候補ニュースが、過去投稿リスト�
 """
 
 
-def _verify_not_duplicate(client: genai.Client, candidate: dict,
+def _verify_not_duplicate(candidate: dict,
                            posted_block: str, excluded_block: str) -> dict:
     """Gemini に選定結果を再評価させ、重複していないか二重チェック"""
     prompt = VERIFY_DEDUP_PROMPT.format(
@@ -263,29 +262,10 @@ def _verify_not_duplicate(client: genai.Client, candidate: dict,
         posted_block=posted_block,
         excluded_block=excluded_block,
     )
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=prompt,
-        config=genai.types.GenerateContentConfig(
-            max_output_tokens=500,
-            response_mime_type="application/json",
-        ),
-    )
-    raw = response.text.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    return json.loads(raw[start:end + 1])
+    return gemini_client.generate_json(prompt, max_tokens=500)
 
 
 def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    client = genai.Client(api_key=api_key)
-
     if not items:
         raise RuntimeError("ヘッドラインが0件。RSS取得を確認してください。")
 
@@ -344,21 +324,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         excluded_block=excluded_block,
     )
 
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=prompt,
-        config=genai.types.GenerateContentConfig(
-            max_output_tokens=4000,
-            response_mime_type="application/json",
-        ),
-    )
-    raw = response.text.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    result = json.loads(raw[start:end + 1])
+    result = gemini_client.generate_json(prompt, max_tokens=config.GEMINI_MAX_TOKENS)
 
     # === 二重チェック: 各候補を順にGeminiで重複判定、非重複のみ採用 ===
     verified = []
@@ -372,7 +338,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
                   file=sys.stderr)
             continue
         # Geminiで意味論的重複判定
-        verdict = _verify_not_duplicate(client, cand, posted_block, excluded_block)
+        verdict = _verify_not_duplicate(cand, posted_block, excluded_block)
         if verdict.get("duplicate"):
             print(f"  [verify-dup] rank{cand.get('rank')} "
                   f"{cand.get('title','')[:30]} ← {verdict.get('reason','')[:80]}",
