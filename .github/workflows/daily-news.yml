@@ -1,24 +1,24 @@
-name: Daily AI Flash News
+name: Daily AI Flash News (5本まとめ生成)
 
 on:
-  # 1日5回生成＆公開（JST基準 / UTCで記述）
-  # 生成開始時刻 → 公開予約（ピーク時刻）
-  # 06:30→07:00（朝の通勤・朝活）
-  # 11:30→12:00（昼休み）
-  # 16:30→17:00（夕方・下校）
-  # 19:00→19:30（ゴールデンタイム）
-  # 21:30→22:00（夜ピーク）
+  # 1日1回 05:00 JST (前日 20:00 UTC) に起動。
+  # ニュース選定を 1 回だけ行い、上位 5 本を一括生成して各時間帯に予約投稿する。
+  # 投稿スロット (JST): 07:00 / 12:00 / 17:00 / 19:30 / 22:00
   schedule:
-    - cron: "30 21 * * *"   # 06:30 JST
-    - cron: "30 2 * * *"    # 11:30 JST
-    - cron: "30 7 * * *"    # 16:30 JST
-    - cron: "0 10 * * *"    # 19:00 JST
-    - cron: "30 12 * * *"   # 21:30 JST
-  # 手動トリガー（テーマを直接指定可能）
+    - cron: "0 20 * * *"   # 05:00 JST
+  # 手動トリガー
   workflow_dispatch:
     inputs:
+      mode:
+        description: '実行モード: batch=5本一括生成, single=1本のみ生成'
+        required: true
+        default: 'batch'
+        type: choice
+        options:
+          - batch
+          - single
       theme:
-        description: 'テーマを直接指定（空欄の場合は news_fetcher で自動選定）'
+        description: '(single モード時) テーマを直接指定。空欄なら news_fetcher で自動選定'
         required: false
         default: ''
       privacy:
@@ -31,18 +31,18 @@ on:
           - unlisted
           - public
       publish_at_jst:
-        description: '公開時刻 JST（HH:MM、空白 or "auto" で現在時刻+30分）。例: 19:30'
+        description: '(single モード時) 公開時刻 JST（HH:MM、空白 or "auto" で現在+30分）'
         required: false
         default: 'auto'
 
 env:
-  # cron 実行時はデフォルト "auto"（現在JST時刻+30分で公開予約）
-  DEFAULT_PUBLISH_AT_JST: "auto"
+  # batch モード時の投稿スロット (JST、HH:MM)
+  PUBLISH_SLOTS: "07:00 12:00 17:00 19:30 22:00"
 
 permissions:
   contents: write   # posted_history.json を push し直すため
 
-# 同時実行を1本に制限し、複数トリガーされた場合は順次実行（重複ネタ回避のため）
+# 同時実行を1本に制限（バッチ実行が長くなるため重要）
 concurrency:
   group: daily-news-generation
   cancel-in-progress: false
@@ -50,7 +50,8 @@ concurrency:
 jobs:
   generate-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 5本生成のため余裕を持って 3 時間
+    timeout-minutes: 180
 
     services:
       voicevox:
@@ -105,56 +106,158 @@ jobs:
           printf '%s' "$YOUTUBE_CLIENT_SECRET_JSON" > client_secret.json
           printf '%s' "$YOUTUBE_TOKEN_JSON" > token.json
 
-      - name: Determine theme
-        id: theme
+      - name: Determine mode
+        id: mode
+        run: |
+          MODE='${{ github.event.inputs.mode }}'
+          # cron トリガー時は inputs が空なので batch をデフォルトに
+          if [ -z "$MODE" ]; then MODE=batch; fi
+          # single モードでも theme が空なら news_fetcher を呼ぶ
+          echo "value=$MODE" >> "$GITHUB_OUTPUT"
+          echo "選択モード: $MODE"
+
+      # ===================================================================
+      # batch モード: 5本一括生成
+      # ===================================================================
+      - name: "[batch] Fetch top 5 news topics"
+        if: steps.mode.outputs.value == 'batch'
+        run: |
+          echo "📰 Claude で TOP5 ニュース選定中..."
+          python news_fetcher.py --json --top 5 > topics.json
+          echo "選定結果:"
+          python -c "
+          import json
+          d = json.load(open('topics.json'))
+          for i, t in enumerate(d['selected'], 1):
+              print(f'  {i}. [{t.get(\"score\", \"?\")}点] {t.get(\"title\", \"\")[:50]}')
+          "
+
+      - name: "[batch] Generate 5 videos and schedule each"
+        if: steps.mode.outputs.value == 'batch'
+        run: |
+          set -e
+
+          # 投稿スロット (JST)
+          read -ra SLOTS <<< "$PUBLISH_SLOTS"
+
+          NUM_TOPICS=$(python -c "
+          import json
+          print(len(json.load(open('topics.json'))['selected']))
+          ")
+
+          if [ "$NUM_TOPICS" -lt 1 ]; then
+            echo "❌ 選定されたトピックが0件。中止します。"
+            exit 1
+          fi
+
+          echo "▶ ${NUM_TOPICS} 本生成 / ${#SLOTS[@]} スロット"
+          SUCCESS=0
+          FAILED=0
+
+          for i in $(seq 0 $((NUM_TOPICS - 1))); do
+            if [ "$i" -ge "${#SLOTS[@]}" ]; then
+              echo "⚠ スロット数 (${#SLOTS[@]}) を超えるトピックは無視します"
+              break
+            fi
+
+            THEME=$(python -c "
+          import json
+          d = json.load(open('topics.json'))
+          print(d['selected'][$i]['theme_for_video'])
+          ")
+            TITLE=$(python -c "
+          import json
+          d = json.load(open('topics.json'))
+          print(d['selected'][$i].get('title', ''))
+          ")
+
+            echo ""
+            echo "===================================================================="
+            echo "🎬 動画 $((i+1))/${NUM_TOPICS}: $TITLE"
+            echo "===================================================================="
+
+            # 失敗してもバッチ全体は継続
+            if ! python main.py --genre ai_news "$THEME"; then
+              echo "❌ 動画 $((i+1)) の生成に失敗。スキップします。"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+
+            RUN_DIR=$(ls -1tdr output/videos/*/ | tail -1)
+            echo "  生成完了: $RUN_DIR"
+
+            # 投稿時刻計算（過去なら翌日に）
+            PUB_TIME="${SLOTS[$i]}"
+            NOW_JST=$(TZ=Asia/Tokyo date +%s)
+            TARGET_JST=$(TZ=Asia/Tokyo date -d "today $PUB_TIME" +%s)
+            if [ "$TARGET_JST" -le "$NOW_JST" ]; then
+              TARGET_JST=$(TZ=Asia/Tokyo date -d "tomorrow $PUB_TIME" +%s)
+            fi
+            ISO=$(TZ=Asia/Tokyo date -d "@$TARGET_JST" --rfc-3339=seconds | sed 's/ /T/')
+            echo "  予約公開: $ISO"
+
+            # スケジュール指定時は privacy=private 強制（YouTube仕様）
+            if ! python youtube_upload.py "$RUN_DIR" \
+              --privacy private \
+              --schedule "$ISO"; then
+              echo "❌ 動画 $((i+1)) のアップロードに失敗。"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+
+            SUCCESS=$((SUCCESS + 1))
+            echo "✅ 動画 $((i+1)) 完了"
+          done
+
+          echo ""
+          echo "===================================================================="
+          echo "📊 バッチ完了: 成功 $SUCCESS / 失敗 $FAILED"
+          echo "===================================================================="
+
+          # 全失敗ならエラー扱い
+          if [ "$SUCCESS" -lt 1 ]; then
+            echo "❌ 1本も生成できませんでした"
+            exit 1
+          fi
+
+      # ===================================================================
+      # single モード: 従来の 1 本生成（手動の検証用）
+      # ===================================================================
+      - name: "[single] Determine theme"
+        if: steps.mode.outputs.value == 'single'
+        id: single_theme
         run: |
           MANUAL_THEME='${{ github.event.inputs.theme }}'
           if [ -n "$MANUAL_THEME" ]; then
             echo "Manual theme provided"
-            echo "value<<__EOF__" >> "$GITHUB_OUTPUT"
-            echo "$MANUAL_THEME" >> "$GITHUB_OUTPUT"
-            echo "__EOF__" >> "$GITHUB_OUTPUT"
+            THEME="$MANUAL_THEME"
           else
             echo "Auto-fetching top news..."
             THEME=$(python news_fetcher.py --json \
               | python -c "import json,sys; d=json.load(sys.stdin); print(d['selected'][0]['theme_for_video'])")
-            echo "value<<__EOF__" >> "$GITHUB_OUTPUT"
-            echo "$THEME" >> "$GITHUB_OUTPUT"
-            echo "__EOF__" >> "$GITHUB_OUTPUT"
           fi
+          echo "value<<__EOF__" >> "$GITHUB_OUTPUT"
+          echo "$THEME" >> "$GITHUB_OUTPUT"
+          echo "__EOF__" >> "$GITHUB_OUTPUT"
 
-      - name: Generate video
+      - name: "[single] Generate video"
+        if: steps.mode.outputs.value == 'single'
         run: |
-          python main.py --genre ai_news "${{ steps.theme.outputs.value }}"
+          python main.py --genre ai_news "${{ steps.single_theme.outputs.value }}"
 
-      - name: Find latest run directory
-        id: rundir
+      - name: "[single] Upload to YouTube"
+        if: steps.mode.outputs.value == 'single'
         run: |
           RUN_DIR=$(ls -1tdr output/videos/*/ | tail -1)
-          echo "path=$RUN_DIR" >> "$GITHUB_OUTPUT"
-          echo "Latest run: $RUN_DIR"
+          echo "Run dir: $RUN_DIR"
 
-      - name: Determine privacy
-        id: privacy
-        run: |
-          P='${{ github.event.inputs.privacy }}'
-          if [ -z "$P" ]; then P=private; fi
-          echo "value=$P" >> "$GITHUB_OUTPUT"
+          PRIVACY='${{ github.event.inputs.privacy }}'
+          if [ -z "$PRIVACY" ]; then PRIVACY=private; fi
 
-      - name: Compute schedule timestamp
-        id: schedule
-        run: |
-          # 公開時刻取得（手動 input → cron時のデフォルト の順）
           PUB='${{ github.event.inputs.publish_at_jst }}'
-          if [ -z "$PUB" ]; then PUB="$DEFAULT_PUBLISH_AT_JST"; fi
-          if [ -z "$PUB" ]; then
-            echo "value=" >> "$GITHUB_OUTPUT"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "（即時公開）"
-            exit 0
-          fi
+          if [ -z "$PUB" ]; then PUB=auto; fi
+
           NOW_JST=$(TZ=Asia/Tokyo date +%s)
-          # "auto" なら現在JST時刻 + 30分後
           if [ "$PUB" = "auto" ]; then
             TARGET_JST=$((NOW_JST + 1800))
           else
@@ -164,31 +267,24 @@ jobs:
               TARGET_JST=$(TZ=Asia/Tokyo date -d "tomorrow $PUB" +%s)
             fi
           fi
-          # RFC3339 (+09:00) で出力
           ISO=$(TZ=Asia/Tokyo date -d "@$TARGET_JST" --rfc-3339=seconds | sed 's/ /T/')
-          echo "value=$ISO" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "予約公開: $ISO"
 
-      - name: Upload to YouTube
-        run: |
-          if [ "${{ steps.schedule.outputs.skip }}" = "true" ]; then
-            python youtube_upload.py "${{ steps.rundir.outputs.path }}" \
-              --privacy "${{ steps.privacy.outputs.value }}"
-          else
-            # スケジュール指定時は privacy を private に強制（YouTubeの仕様）
-            python youtube_upload.py "${{ steps.rundir.outputs.path }}" \
-              --privacy private \
-              --schedule "${{ steps.schedule.outputs.value }}"
-          fi
+          python youtube_upload.py "$RUN_DIR" \
+            --privacy private \
+            --schedule "$ISO"
 
-      - name: Save outputs as artifact (debug用)
+      # ===================================================================
+      # 共通の後処理
+      # ===================================================================
+      - name: Save all outputs as artifact (debug用)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.run_id }}
+          name: videos-${{ github.run_id }}
           path: |
-            ${{ steps.rundir.outputs.path }}
+            output/videos/
+            topics.json
           retention-days: 7
 
       - name: Commit posted_history.json back to repo
@@ -200,6 +296,6 @@ jobs:
             echo "No changes to history"
           else
             git add posted_history.json
-            git commit -m "chore: update posted_history (run ${{ github.run_id }})"
+            git commit -m "chore: batch update posted_history (run ${{ github.run_id }})"
             git push
           fi

@@ -333,7 +333,8 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         for i in filtered[:120]
     )
     # Claudeには余裕を持って多めに選定させる（二重チェックで弾かれた時のバックアップ用）
-    claude_top_n = max(top_n, 5)
+    # top_n=1 → 5候補、top_n=5 → 8候補
+    claude_top_n = max(top_n + 3, 5)
     prompt = CLAUDE_SCORE_PROMPT.format(
         top_n=claude_top_n,
         headlines=headlines_text,
