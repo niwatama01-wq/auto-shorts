@@ -15,7 +15,7 @@ ASSETS_ENTITIES = ROOT / "assets" / "entities"   # 固有名詞→画像の差�
 
 # ===== Gemini API =====
 GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_MAX_TOKENS = 4000
+GEMINI_MAX_TOKENS = 8192
 
 # ===== VOICEVOX =====
 VOICEVOX_HOST = "http://localhost:50021"
