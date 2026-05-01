@@ -1,4 +1,4 @@
-"""RSS で当日のヘッドラインを集めて、Claude API で「最もバズ理想な1本」を選定する。
+"""RSS で当日のヘッドラインを集めて、Gemini API で「最もバズ理想な1本」を選定する。
 
 使い方:
   python news_fetcher.py            # トップネタを表示
@@ -17,7 +17,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
 import feedparser
-import anthropic
+from google import genai
 from dotenv import load_dotenv
 
 import config
@@ -105,7 +105,7 @@ def fetch_recent_headlines(hours: int = 24, max_per_feed: int = 5) -> list[dict]
     return items
 
 
-CLAUDE_SCORE_PROMPT = """あなたはYouTube Shortsニュースチャンネルのプロデューサーです。
+GEMINI_SCORE_PROMPT = """あなたはYouTube Shortsニュースチャンネルのプロデューサーです。
 以下の本日のニュースヘッドラインリストから、**最もバズる確率が高い** トップ{top_n}本を100点満点でスコアリングして選んでください。
 
 【スコアリング基準（100点満点）】
@@ -254,21 +254,24 @@ VERIFY_DEDUP_PROMPT = """以下の候補ニュースが、過去投稿リスト�
 """
 
 
-def _verify_not_duplicate(client, candidate: dict, posted_block: str,
-                           excluded_block: str) -> dict:
-    """Claude に選定結果を再評価させ、重複していないか二重チェック"""
+def _verify_not_duplicate(client: genai.Client, candidate: dict,
+                           posted_block: str, excluded_block: str) -> dict:
+    """Gemini に選定結果を再評価させ、重複していないか二重チェック"""
     prompt = VERIFY_DEDUP_PROMPT.format(
         title=candidate.get("title", ""),
         theme=candidate.get("theme_for_video", "")[:500],
         posted_block=posted_block,
         excluded_block=excluded_block,
     )
-    msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
+    response = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(
+            max_output_tokens=500,
+            response_mime_type="application/json",
+        ),
     )
-    raw = msg.content[0].text.strip()
+    raw = response.text.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
@@ -278,10 +281,10 @@ def _verify_not_duplicate(client, candidate: dict, posted_block: str,
 
 
 def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-    client = anthropic.Anthropic(api_key=api_key)
+        raise RuntimeError("GEMINI_API_KEY not set")
+    client = genai.Client(api_key=api_key)
 
     if not items:
         raise RuntimeError("ヘッドラインが0件。RSS取得を確認してください。")
@@ -313,7 +316,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
     for src, lst in by_source.items():
         balanced.extend(lst[:6])  # 各ソース最大6件
 
-    # 手動ブロックに引っかかるヘッドラインはプロンプト投入前に弾く（Claudeコスト節約）
+    # 手動ブロックに引っかかるヘッドラインはプロンプト投入前に弾く（コスト節約）
     before_filter = len(balanced)
     filtered = []
     for it in balanced:
@@ -332,21 +335,24 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         f"- [{i['source']}] {i['title']} ({i['url']})\n  {i['summary']}"
         for i in filtered[:120]
     )
-    # Claudeには余裕を持って多めに選定させる（二重チェックで弾かれた時のバックアップ用）
-    claude_top_n = max(top_n, 5)
-    prompt = CLAUDE_SCORE_PROMPT.format(
-        top_n=claude_top_n,
+    # 余裕を持って多めに選定させる（二重チェックで弾かれた時のバックアップ用）
+    gemini_top_n = max(top_n, 5)
+    prompt = GEMINI_SCORE_PROMPT.format(
+        top_n=gemini_top_n,
         headlines=headlines_text,
         posted_block=posted_block,
         excluded_block=excluded_block,
     )
 
-    msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
+    response = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(
+            max_output_tokens=4000,
+            response_mime_type="application/json",
+        ),
     )
-    raw = msg.content[0].text.strip()
+    raw = response.text.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
@@ -354,7 +360,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
     end = raw.rfind("}")
     result = json.loads(raw[start:end + 1])
 
-    # === 二重チェック: 各候補を順にClaudeで重複判定、非重複のみ採用 ===
+    # === 二重チェック: 各候補を順にGeminiで重複判定、非重複のみ採用 ===
     verified = []
     for cand in result.get("selected", []):
         # 手動ブロックのローカル再チェック（念のため）
@@ -365,7 +371,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
                   f"{cand.get('title','')[:30]} ← {'+'.join(hit)}",
                   file=sys.stderr)
             continue
-        # Claudeで意味論的重複判定
+        # Geminiで意味論的重複判定
         verdict = _verify_not_duplicate(client, cand, posted_block, excluded_block)
         if verdict.get("duplicate"):
             print(f"  [verify-dup] rank{cand.get('rank')} "
@@ -401,7 +407,7 @@ def main():
     items = fetch_recent_headlines(hours=args.hours)
     print(f"   → {len(items)} 件取得", file=sys.stderr)
 
-    print(f"🤖 Claude で TOP{args.top} 選定中...", file=sys.stderr)
+    print(f"🤖 Gemini で TOP{args.top} 選定中...", file=sys.stderr)
     result = select_top_topic(items, top_n=args.top)
 
     if args.json:

@@ -1,15 +1,19 @@
-"""Claude API でジャンル別 Shorts 台本（JSON）を生成
+"""Gemini API でジャンル別 Shorts 台本（JSON）を生成
 
-v7変更点:
-- duration パラメータを受け取り、プロンプトに {duration} {min/max_chars} {min/max_scenes} を埋める
-  既存ジャンル (horror等) のテンプレが {duration} 等を含まなければ自動で旧挙動にfallback
+v8変更点:
+- Claude API → Gemini API に移行
+- google-genai SDK を使用
+
+使い方:
+  python main.py --genre horror "深夜のコンビニで起きた不可解な出来事"
+  python main.py --genre ai_news "OpenAIが新モデル発表"
 """
 import os
 import json
 import re
 from datetime import datetime
 
-import anthropic
+from google import genai
 from dotenv import load_dotenv
 
 import config
@@ -57,23 +61,26 @@ def generate_script(theme: str, genre, duration: int | None = None) -> dict:
 
     duration: 動画尺（秒）。Noneなら genre.DURATION_SEC、それも無ければ 30。
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set in environment or .env")
+        raise RuntimeError("GEMINI_API_KEY not set in environment or .env")
 
     if duration is None:
         duration = getattr(genre, "DURATION_SEC", 30)
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     prompt = _format_prompt(genre.PROMPT_TEMPLATE, theme, duration)
 
-    max_tokens = getattr(genre, "CLAUDE_MAX_TOKENS", config.CLAUDE_MAX_TOKENS)
-    msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
+    max_tokens = getattr(genre, "GEMINI_MAX_TOKENS", config.GEMINI_MAX_TOKENS)
+    response = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(
+            max_output_tokens=max_tokens,
+            response_mime_type="application/json",
+        ),
     )
-    raw = msg.content[0].text
+    raw = response.text
     script = json.loads(_strip_to_json(raw))
 
     config.ensure_dirs()

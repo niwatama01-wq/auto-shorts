@@ -13,9 +13,9 @@ ASSETS_SFX = ROOT / "assets" / "sfx"
 ASSETS_FONTS = ROOT / "assets" / "fonts"
 ASSETS_ENTITIES = ROOT / "assets" / "entities"   # 固有名詞→画像の差し替え用
 
-# ===== Claude API =====
-CLAUDE_MODEL = "claude-opus-4-7"
-CLAUDE_MAX_TOKENS = 4000
+# ===== Gemini API =====
+GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MAX_TOKENS = 4000
 
 # ===== VOICEVOX =====
 VOICEVOX_HOST = "http://localhost:50021"
