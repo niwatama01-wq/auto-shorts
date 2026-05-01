@@ -316,7 +316,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         for i in filtered[:120]
     )
     # 余裕を持って多めに選定させる（二重チェックで弾かれた時のバックアップ用）
-    gemini_top_n = max(top_n, 5)
+    gemini_top_n = max(top_n, 3)
     prompt = GEMINI_SCORE_PROMPT.format(
         top_n=gemini_top_n,
         headlines=headlines_text,
@@ -324,7 +324,8 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         excluded_block=excluded_block,
     )
 
-    result = gemini_client.generate_json(prompt, max_tokens=config.GEMINI_MAX_TOKENS)
+    # 候補3-5本 × 各 ~600-800 tokens のため、16K 確保
+    result = gemini_client.generate_json(prompt, max_tokens=16384)
 
     # === 二重チェック: 各候補を順にGeminiで重複判定、非重複のみ採用 ===
     verified = []

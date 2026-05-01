@@ -14,7 +14,9 @@ ASSETS_FONTS = ROOT / "assets" / "fonts"
 ASSETS_ENTITIES = ROOT / "assets" / "entities"   # 固有名詞→画像の差し替え用
 
 # ===== Gemini API =====
-GEMINI_MODEL = "gemini-2.5-flash"
+# gemini-2.0-flash: 無料枠 1500 req/day（2.5-flashの20より緩い）
+# 必要なら "gemini-2.5-flash" や "gemini-2.5-pro" に切替可能
+GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_MAX_TOKENS = 8192
 
 # ===== VOICEVOX =====
