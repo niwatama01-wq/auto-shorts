@@ -1,18 +1,32 @@
-"""Gemini API でジャンル別 Shorts 台本（JSON）を生成
+"""Claude API でジャンル別 Shorts 台本（JSON）を生成
 
-v8変更点:
-- Claude API → Gemini API に移行
-- google-genai SDK を使用（gemini_client 経由、リトライ+JSON修復付き）
-
-使い方:
-  python main.py --genre horror "深夜のコンビニで起きた不可解な出来事"
-  python main.py --genre ai_news "OpenAIが新モデル発表"
+v7変更点:
+- duration パラメータを受け取り、プロンプトに {duration} {min/max_chars} {min/max_scenes} を埋める
+  既存ジャンル (horror等) のテンプレが {duration} 等を含まなければ自動で旧挙動にfallback
 """
+import os
 import json
+import re
 from datetime import datetime
 
+import anthropic
+from dotenv import load_dotenv
+
 import config
-import gemini_client
+
+load_dotenv(config.ROOT / ".env")
+
+
+def _strip_to_json(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError(f"JSON not found in response: {text[:200]}")
+    return text[start:end + 1]
 
 
 def _format_prompt(template: str, theme: str, duration: int) -> str:
@@ -43,12 +57,24 @@ def generate_script(theme: str, genre, duration: int | None = None) -> dict:
 
     duration: 動画尺（秒）。Noneなら genre.DURATION_SEC、それも無ければ 30。
     """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set in environment or .env")
+
     if duration is None:
         duration = getattr(genre, "DURATION_SEC", 30)
 
+    client = anthropic.Anthropic(api_key=api_key)
     prompt = _format_prompt(genre.PROMPT_TEMPLATE, theme, duration)
-    max_tokens = getattr(genre, "GEMINI_MAX_TOKENS", config.GEMINI_MAX_TOKENS)
-    script = gemini_client.generate_json(prompt, max_tokens=max_tokens)
+
+    max_tokens = getattr(genre, "CLAUDE_MAX_TOKENS", config.CLAUDE_MAX_TOKENS)
+    msg = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = msg.content[0].text
+    script = json.loads(_strip_to_json(raw))
 
     config.ensure_dirs()
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

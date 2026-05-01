@@ -13,14 +13,9 @@ ASSETS_SFX = ROOT / "assets" / "sfx"
 ASSETS_FONTS = ROOT / "assets" / "fonts"
 ASSETS_ENTITIES = ROOT / "assets" / "entities"   # 固有名詞→画像の差し替え用
 
-# ===== Gemini =====
-# "browser": Playwright で gemini.google.com にCookie認証してアクセス（API制限なし）
-# "api"    : 公式 Gemini API（要 GEMINI_API_KEY、無料枠あり）
-GEMINI_BACKEND = "browser"
-
-# API 利用時のモデル（GEMINI_BACKEND="api" のとき有効）
-GEMINI_MODEL = "gemini-2.0-flash"
-GEMINI_MAX_TOKENS = 8192
+# ===== Claude API =====
+CLAUDE_MODEL = "claude-opus-4-7"
+CLAUDE_MAX_TOKENS = 4000
 
 # ===== VOICEVOX =====
 VOICEVOX_HOST = "http://localhost:50021"
