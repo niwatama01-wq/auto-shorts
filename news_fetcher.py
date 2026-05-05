@@ -227,6 +227,54 @@ def _matches_excluded(text: str, rules: list[list[str]]) -> list[str] | None:
     return None
 
 
+
+def _call_claude_json(client, prompt, max_tokens=4000, label="claude", max_retries=3):
+    """Claudeに JSON 出力させて parse。失敗時は最大3回リトライ + より厳しい指示で再試行。"""
+    last_err = None
+    cur_prompt = prompt
+    for attempt in range(1, max_retries + 1):
+        msg = client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": cur_prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1:
+            print(f"  [warn][{label}] JSON not found, attempt {attempt}/{max_retries}", file=sys.stderr)
+            last_err = ValueError("JSON not found in Claude response")
+        else:
+            candidate = raw[start:end + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_err = e
+                print(f"  [warn][{label}] JSONDecodeError attempt {attempt}/{max_retries}: {e}", file=sys.stderr)
+                # 復旧試行: 制御文字を除去して再パース
+                cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", candidate)
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+        # リトライ用にプロンプトを補強（より厳しいJSON出力指示）
+        cur_prompt = (
+            prompt
+            + "\n\n【重要・再送】前回の応答はJSONとしてパースできませんでした("
+            + (str(last_err)[:120] if last_err else "原因不明")
+            + ")。"
+              "今度は **完全に妥当なJSON** だけを出力してください。"
+              "・前置き/後置きの説明文・コードフェンス禁止。"
+              "・文字列内のダブルクォートは必ず \\\" でエスケープ。"
+              "・末尾カンマ禁止。"
+              "・改行は \\n を使うか、シンプルにスペースで連結。"
+        )
+    raise last_err or RuntimeError(f"Claude JSON parse failed after {max_retries} retries")
+
+
 VERIFY_DEDUP_PROMPT = """以下の候補ニュースが、過去投稿リストまたは手動ブロックリストと重複していないか厳密に判定せよ。
 
 【判定基準（いずれか1つでも当てはまれば重複扱い）】
@@ -263,18 +311,9 @@ def _verify_not_duplicate(client, candidate: dict, posted_block: str,
         posted_block=posted_block,
         excluded_block=excluded_block,
     )
-    msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
+    return _call_claude_json(
+        client, prompt, max_tokens=500, label="verify_dedup"
     )
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    return json.loads(raw[start:end + 1])
 
 
 def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
@@ -342,18 +381,9 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
         excluded_block=excluded_block,
     )
 
-    msg = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
+    result = _call_claude_json(
+        client, prompt, max_tokens=4000, label="select_top_topic"
     )
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    result = json.loads(raw[start:end + 1])
 
     # === 二重チェック: 各候補を順にClaudeで重複判定、非重複のみ採用 ===
     verified = []
