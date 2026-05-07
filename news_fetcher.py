@@ -447,10 +447,24 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
             break
 
     if not verified:
-        raise RuntimeError(
-            "二重チェックを通過したネタが0件。"
-            "excluded_topics.txt を見直すか、時間をおいて再実行してください。"
-        )
+        # フォールバック: 全候補が verify で弾かれた場合、Claude選定TOPを強制採用
+        # (excluded_topics.txt のローカルチェックを通過した候補のみ対象)
+        import re as _re_mod
+        for cand in result.get("selected", []):
+            hay = f"{cand.get('title','')} {cand.get('theme_for_video','')}"
+            hit = _matches_excluded(hay, excluded_rules)
+            if hit:
+                continue
+            print(f"  [fallback] verify全弾→ TOP{cand.get('rank',1)} を強制採用: "
+                  f"{cand.get('title','')[:40]}", file=sys.stderr)
+            verified.append(cand)
+            if len(verified) >= top_n:
+                break
+        if not verified:
+            raise RuntimeError(
+                "Claude が候補を1件も返さない、または全件 excluded_topics.txt にマッチ。"
+                "excluded_topics.txt を見直してください。"
+            )
 
     # rank を振り直す
     for i, c in enumerate(verified, 1):
