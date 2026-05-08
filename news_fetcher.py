@@ -237,6 +237,7 @@ _SELECT_TOOL = {
         "properties": {
             "selected": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -421,6 +422,11 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
     result = _call_claude_json(
         client, prompt, max_tokens=4000, label="select_top_topic"
     )
+    # 診断: Claude が何件返したか
+    selected = result.get("selected", []) if isinstance(result, dict) else []
+    print(f"  [diag] Claude returned {len(selected)} candidates", file=sys.stderr)
+    for i, c in enumerate(selected[:5]):
+        print(f"    {i+1}. score={c.get('score')} '{c.get('title','')[:50]}'", file=sys.stderr)
 
     # === 二重チェック: 各候補を順にClaudeで重複判定、非重複のみ採用 ===
     verified = []
