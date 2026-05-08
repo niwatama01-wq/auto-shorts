@@ -300,9 +300,20 @@ def _call_claude_json(client, prompt, max_tokens=4000, label="claude", tool=None
                 tool_choice={"type": "tool", "name": tool["name"]},
                 messages=[{"role": "user", "content": prompt}],
             )
-            for block in msg.content:
-                if getattr(block, "type", None) == "tool_use":
-                    return block.input  # API がJSONとして既にdict化してくれる
+            print(f"  [diag][{label}] stop_reason={msg.stop_reason}, content_blocks={len(msg.content)}", file=sys.stderr, flush=True)
+            for i, block in enumerate(msg.content):
+                btype = getattr(block, "type", "?")
+                print(f"  [diag][{label}] block[{i}].type={btype}", file=sys.stderr, flush=True)
+                if btype == "text":
+                    text = getattr(block, "text", "")
+                    print(f"  [diag][{label}] block[{i}].text(first 500): {text[:500]}", file=sys.stderr, flush=True)
+                elif btype == "tool_use":
+                    import json as _json_mod
+                    inp = getattr(block, "input", {})
+                    inp_str = _json_mod.dumps(inp, ensure_ascii=False)
+                    print(f"  [diag][{label}] block[{i}].input(first 500): {inp_str[:500]}", file=sys.stderr, flush=True)
+                    if isinstance(inp, dict):
+                        return inp
             last_err = ValueError(f"tool_use ブロックが応答に含まれない (stop_reason={msg.stop_reason})")
         except Exception as e:
             last_err = e
