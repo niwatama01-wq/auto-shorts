@@ -284,7 +284,7 @@ _VERIFY_TOOL = {
 }
 
 
-def _call_claude_json(client, prompt, max_tokens=4000, label="claude", tool=None, max_retries=2):
+def _call_claude_json(client, prompt, max_tokens=16000, label="claude", tool=None, max_retries=2):
     """Claude Tool Use APIで構造化JSONを強制取得。
     tool 引数で出力スキーマを渡す (default: _SELECT_TOOL)。"""
     if tool is None:
@@ -361,7 +361,7 @@ def _verify_not_duplicate(client, candidate: dict, posted_block: str,
         excluded_block=excluded_block,
     )
     return _call_claude_json(
-        client, prompt, max_tokens=500, label="verify_dedup", tool=_VERIFY_TOOL
+        client, prompt, max_tokens=2000, label="verify_dedup", tool=_VERIFY_TOOL
     )
 
 
@@ -431,7 +431,7 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
     )
 
     result = _call_claude_json(
-        client, prompt, max_tokens=4000, label="select_top_topic"
+        client, prompt, max_tokens=16000, label="select_top_topic"
     )
     # 診断: Claude が何件返したか
     selected = result.get("selected", []) if isinstance(result, dict) else []
