@@ -126,31 +126,46 @@ def run(genre_name: str, theme: str | None = None,
     hook = script["scenes"][0]["narration"] if script.get("scenes") else ""
     import re as _re
     hook_clean = _re.sub(r"\*\*([^*]+?)\*\*", r"\1", hook).strip()
-    theme = script["_meta"].get("theme", "")[:300]
+    # 一次情報の本文（news_fetcherが付与）は概要欄に出さない＝ブリーフだけ短く使う
+    theme = script["_meta"].get("theme", "").split("【一次情報")[0].strip()[:220]
     duration_label = script["_meta"].get("duration_sec", 30)
+
+    # トピックハッシュタグを台本のentityから動的生成（SEO＝検索/関連流入）
+    _ENTITY_HASH = {
+        "openai": "#OpenAI", "anthropic": "#Anthropic", "google": "#Google",
+        "nvidia": "#NVIDIA", "apple": "#Apple", "microsoft": "#Microsoft",
+        "meta": "#Meta", "amazon": "#Amazon", "tesla": "#Tesla", "samsung": "#Samsung",
+        "chatgpt": "#ChatGPT", "claude": "#Claude", "gemini": "#Gemini", "gpt": "#GPT",
+        "china": "#中国AI",
+    }
+    _seen_h = []
+    for _sc in script.get("scenes", []) or []:
+        _e = (_sc.get("entity") or "").lower()
+        if _e in _ENTITY_HASH and _ENTITY_HASH[_e] not in _seen_h:
+            _seen_h.append(_ENTITY_HASH[_e])
+    topical_hashtags = " ".join(_seen_h[:5])
 
     sep = "━━━━━━━━━━━━━━━━━━━━"
     desc_lines = [
         f"📡 {title}",
         "",
         sep,
-        "  60秒ニュース速報 / Flash News",
-        f"  世界の今を、{duration_label}秒で。",
+        "  藍のAI速報｜日本はどうなる",
+        f"  海外AIの最新を、日本の「仕事・暮らし・お金」の話に翻訳して{duration_label}秒で。",
         sep,
         "",
-        "▼ 本日のヘッドライン",
+        "▼ 今日のポイント",
         f"　{hook_clean}",
         "",
-        "▼ 詳細",
+        "▼ 概要",
         f"　{theme}",
         "",
-        "▼ このチャンネルについて",
-        "　世界中のニュースを厳選・要約し、",
-        f"　{duration_label}秒の報道調ショートにまとめてお届け。",
-        "　テック、経済、政治、エンタメ、国際、社会——",
-        "　ジャンル問わず、今この瞬間を速く、客観的に。",
+        "▼ このチャンネル",
+        "　OpenAI・Google・NVIDIAなど海外AIの動きが、",
+        "　日本のあなたの仕事・給料・生活に何をもたらすか——",
+        f"　キャスター藍が、要点だけを{duration_label}秒で解説します。",
         "",
-        "#Shorts #ニュース速報 #30秒 #FlashNews",
+        f"{topical_hashtags} #AIニュース #生成AI #AI #日本 #Shorts".strip(),
         "",
         sep,
     ]

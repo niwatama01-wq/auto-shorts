@@ -197,8 +197,11 @@ jobs:
             echo "  予約公開: $ISO"
 
             # スケジュール指定時は privacy=private 強制（YouTube仕様）
+            # --title-index $i: 5本が同じ型に偏らないよう、スロットごとに別のタイトル型を使う
+            #   (i=0 日本直撃型 / 1 数字型 / 2 あなた自分ごと型 / 3 疑問対立型 / 4 先取り警告型)
             if ! python youtube_upload.py "$RUN_DIR" \
               --privacy private \
+              --title-index "$i" \
               --schedule "$ISO"; then
               echo "❌ 動画 $((i+1)) のアップロードに失敗。"
               FAILED=$((FAILED + 1))

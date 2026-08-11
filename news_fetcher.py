@@ -105,16 +105,22 @@ def fetch_recent_headlines(hours: int = 24, max_per_feed: int = 5) -> list[dict]
     return items
 
 
-CLAUDE_SCORE_PROMPT = """あなたはYouTube Shortsニュースチャンネルのプロデューサーです。
-以下の本日のニュースヘッドラインリストから、**最もバズる確率が高い** トップ{top_n}本を100点満点でスコアリングして選んでください。
+CLAUDE_SCORE_PROMPT = """あなたはYouTube Shorts「藍のAI速報｜日本はどうなる」のプロデューサーです。
+このチャンネルは **「海外の最新AI・テックが、日本の私たちの"仕事・暮らし・お金"に何をもたらすか」だけ** を扱う一点特化チャンネルです。
+以下の本日のニュースヘッドラインリストから、**このチャンネルに最も合い、かつ伸びる** トップ{top_n}本を100点満点でスコアリングして選んでください。
 
-【スコアリング基準（100点満点）】
-- 数字インパクト (25点): 具体的な数字（金額・人数・倍率・%）が含まれるか。大きいほど高得点。例「1600万件」「3兆円」「過去最大」
-- 固有名詞の知名度 (20点): 一般人が即座に認知できる企業/人物/国名か。例「OpenAI」「トヨタ」「中国」は◎
-- 感情訴求 (20点): 怒り・驚き・恐怖・希望・嫉妬のいずれかを刺激するか
-- 議論性 (15点): コメント欄で意見が割れる構造があるか（賛否両論トピック）
+【🚩最優先の適合ゲート（満たさないネタは、どんなにバズっても選ばない）】
+1. **AI・テックが主役**であること（新モデル/新機能/AIエージェント/半導体/規制/巨額投資/大企業の決断: OpenAI/Anthropic/Google/NVIDIA/Apple/Microsoft/Meta/中国AI 等）。純粋な政治・戦争・事件事故・芸能・スポーツは、AIが絡まなければ除外。
+2. **日本影響線が具体で描ける**こと（日本のどの仕事・業界・生活・お金に、いつ効くか）。日本に全く関係しない海外ローカルは除外。ただし「まだ日本に来ていないが必ず来る」先取りネタは可。
+→ この2つを満たさない候補は選定リストに入れない。
+
+【スコアリング基準（100点満点・AI×日本 特化）】
+- AI・テック中核性 (25点): AI/テックがニュースの主役か。周辺で少し触れるだけは低得点
+- 日本影響の強さ・具体性 (25点): 日本の仕事/業界/生活/お金への影響が、具体的に・数字で描けるか。「自分ごと化」できるほど高得点
+- 数字インパクト (15点): 金額・人数・期日など具体数字（例「40万人」「2000億円」「来月」）
+- 固有名詞の知名度 (15点): 一般人が即認知するAI/企業名か（OpenAI/ChatGPT/Google/NVIDIA/Apple ◎）
+- 議論性・感情訴求 (10点): 賛否が割れる/驚き・警戒を刺激するか
 - 速報性 (10点): 発生から24時間以内か
-- 視覚化しやすさ (10点): 画像/グラフで一目で伝わるトピックか
 
 【🚨絶対禁止: 過去に投稿済みのネタ（最優先ルール）】
 以下の投稿済みリスト（タイトル＋theme要約）に **同じ主要キーワード・同じ企業名・同じ事案・同じ数字・同じトピック軸** が出ているネタは、
@@ -154,12 +160,18 @@ CLAUDE_SCORE_PROMPT = """あなたはYouTube Shortsニュースチャンネル�
 - 災害・事故の犠牲者報道（広告適合性で-）
 - 上記投稿済みリストと **同じトピック・同じ事案** （別の角度や続報なら可）
 
-【優先トピックジャンル】
-- AI・テック大手の動向（OpenAI / Anthropic / Google / NVIDIA / Apple / Microsoft / Meta）
-- 海外発で日本未報道のテック・経済ニュース（日本語化ニーズ大）
-- 業界の「初」「最大」「過去最高」が含まれる事象
-- 数字で語れる経済指標（金利・為替・GDP・決算）
-- 大企業の不祥事/リコール/買収（議論性高、ただし公人・公開情報のみ）
+【優先トピックジャンル（AI×日本）】
+- 新モデル/新機能で "日本のどの仕事が変わるか"（事務/制作/翻訳/開発/接客/カスタマーサポート等）
+- AI規制・法律で "日本だけ状況が違う"（EU/米の規制、日本の対応の遅速、使える/使えない）
+- 巨額投資・買収・提携が "日本企業/株/雇用/電気代" にどう波及するか
+- 日本企業・日本市場へのAI直撃（トヨタ/ソニー/NTT/楽天/メガバンク等がAIでどう動く・脅かされる）
+- 生活・お金への直撃（給料/物価/AI詐欺/教育/新卒採用がAIでどう変わる）
+- 海外発で日本未報道のAIニュース（日本語化・自分ごと翻訳のニーズ大）
+
+【選ばない（このチャンネルでは扱わない）】
+- AIが絡まない純政治・純戦争・純事件事故・芸能ゴシップ・スポーツ結果
+- 日本に接続できない海外ローカルのAI話（先取り価値もないもの）
+- 生活インパクトの薄い単なる製品スペック更新
 
 【出力形式】
 必ず以下のJSON形式のみで出力。前後の説明文・コードフェンス禁止。
@@ -182,7 +194,7 @@ CLAUDE_SCORE_PROMPT = """あなたはYouTube Shortsニュースチャンネル�
       "url": "URL",
       "buzz_reason": "なぜバズるか1行説明",
       "risk_check": "収益化リスク評価（OK / 軽微 / 高リスク等）",
-      "theme_for_video": "動画台本生成に渡すための、5W1Hを含む詳細なテーマ文（200-400字）。日本語、報道調、固有名詞・数字を必ず含める。"
+      "theme_for_video": "動画台本生成に渡すための詳細テーマ文（250-450字）。日本語・報道調。必須要素=①AIの事実（誰が/何を/いつ/規模の数字）②なぜ重要か ③【日本影響線】日本のどの仕事・業界・生活・お金に、いつ・どう効くかを具体で（抽象NG。数字が無ければ対象と時期を具体化）。憶測で数字を作らず、ヘッドライン/要約にある事実に忠実に。"
     }}
   ]
 }}
@@ -226,6 +238,32 @@ def _matches_excluded(text: str, rules: list[list[str]]) -> list[str] | None:
             return tokens
     return None
 
+
+
+def _fetch_article_text(url: str, max_chars: int = 1400) -> str:
+    """元記事本文を軽量取得してプレーンテキストで返す（台本の事実精度UP＝内容精査の核）。
+    見出し＋要約300字だけで台本を書かせず、一次情報の本文を script に渡すため。
+    失敗時は空文字（best-effort・パイプラインは絶対に止めない）。"""
+    if not url:
+        return ""
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read(400_000)
+            charset = resp.headers.get_content_charset() or "utf-8"
+        html_text = raw.decode(charset, errors="ignore")
+    except Exception as e:
+        print(f"  [article] 本文取得失敗 {url[:50]}: {e}", file=sys.stderr)
+        return ""
+    import html as _htmlmod
+    html_text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", html_text)
+    html_text = re.sub(r"(?is)<br\s*/?>", "\n", html_text)
+    text = re.sub(r"(?s)<[^>]+>", " ", html_text)
+    text = _htmlmod.unescape(text)
+    text = re.sub(r"[ \t　]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text).strip()
+    return text[:max_chars]
 
 
 # === Tool Use 用のスキーマ定義 ===
@@ -482,6 +520,21 @@ def select_top_topic(items: list[dict], top_n: int = 1) -> dict:
                 "Claude が候補を1件も返さない、または全件 excluded_topics.txt にマッチ。"
                 "excluded_topics.txt を見直してください。"
             )
+
+    # === 内容精査: 選定した記事の本文を実取得し、theme に一次情報を足す ===
+    for c in verified:
+        body = _fetch_article_text(c.get("url", ""))
+        if body:
+            c["theme_for_video"] = (
+                (c.get("theme_for_video", "") or "")
+                + "\n\n【一次情報・元記事本文抜粋（正確性のため。ここにある事実に忠実に書き、"
+                  "本文に無い数字・固有名詞は創作しないこと）】\n"
+                + body
+            )
+            c["source_verified"] = True
+            print(f"  [article] 本文取得OK({len(body)}字): {c.get('title','')[:30]}", file=sys.stderr)
+        else:
+            c["source_verified"] = False
 
     # rank を振り直す
     for i, c in enumerate(verified, 1):

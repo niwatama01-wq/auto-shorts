@@ -34,7 +34,27 @@ CLIENT_SECRET = config.ROOT / "client_secret.json"
 TOKEN_PATH = config.ROOT / "token.json"
 
 CATEGORY_SCIENCE_TECH = "28"   # YouTube Category ID: 科学と技術
-DEFAULT_TAGS = ["ニュース速報", "60秒ニュース", "Shorts", "FlashNews"]
+DEFAULT_TAGS = ["AIニュース", "AI", "生成AI", "ニュース解説", "テクノロジー", "日本経済", "Shorts", "藍のAI速報"]
+
+# entity → 検索タグ（動画の中身に沿った動的タグ＝SEO。静的タグだけでは検索/関連に乗らない）
+ENTITY_TAG_MAP = {
+    "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google",
+    "microsoft": "Microsoft", "meta": "Meta", "apple": "Apple",
+    "amazon": "Amazon", "nvidia": "NVIDIA", "tesla": "Tesla", "samsung": "Samsung",
+    "claude": "Claude", "gpt": "GPT", "chatgpt": "ChatGPT", "gemini": "Gemini",
+    "china": "中国AI", "usa": "アメリカ", "japan": "日本",
+}
+
+
+def _derive_tags(script: dict) -> list[str]:
+    """台本の各シーンentityから、動画の中身に沿ったタグを生成する。"""
+    out = []
+    for sc in (script.get("scenes") or []):
+        e = (sc.get("entity") or "").lower()
+        tag = ENTITY_TAG_MAP.get(e)
+        if tag and tag not in out:
+            out.append(tag)
+    return out
 
 
 def get_authenticated_service():
@@ -84,11 +104,15 @@ def _load_run(run_dir: Path) -> dict:
 
 def _build_body(run: dict, title: str, privacy: str,
                 schedule_iso: str | None, extra_tags: list[str]) -> dict:
-    tags = list(DEFAULT_TAGS) + extra_tags
+    dynamic = _derive_tags(run.get("script") or {})
+    tags = []
+    for t in list(DEFAULT_TAGS) + dynamic + list(extra_tags):
+        if t and t not in tags:
+            tags.append(t)
     # Shortsとして検出されやすくするため #Shorts を description に追加
     desc = run["description"] or ""
     if "#Shorts" not in desc and "#shorts" not in desc:
-        desc = desc + "\n\n#Shorts #AI #ニュース"
+        desc = desc + "\n\n#Shorts #AIニュース #日本"
 
     body = {
         "snippet": {
